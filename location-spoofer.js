@@ -414,6 +414,22 @@
     return Math.trunc(Number(value) * 100000000);
   }
 
+  function parseBoolean(value, defaultValue) {
+    if (value === true || value === false) {
+      return value;
+    }
+    if (typeof value === "string") {
+      var normalized = value.trim().toLowerCase();
+      if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+        return true;
+      }
+      if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+        return false;
+      }
+    }
+    return defaultValue;
+  }
+
   function normalizeConfig(input) {
     var cfg = {};
     var key;
@@ -429,7 +445,8 @@
       }
     }
 
-    cfg.enabled = cfg.enabled !== false;
+    cfg.enabled = parseBoolean(cfg.enabled, true);
+    cfg.failOpen = parseBoolean(cfg.failOpen, true);
     var mode = String(cfg.mode || "response").toLowerCase();
     cfg.mode = mode === "request" || mode === "prepare" || mode === "probe" || mode === "inspect" ? mode : "response";
     cfg.latitude = Number(cfg.latitude);
@@ -799,6 +816,187 @@
     return result;
   }
 
+  function readScriptArguments() {
+    if (typeof $argument === "undefined" || $argument == null) {
+      return {};
+    }
+    if (typeof $argument === "string") {
+      return parseArgumentString($argument);
+    }
+    if (typeof $argument === "object") {
+      var out = {};
+      var key;
+      for (key in $argument) {
+        if (Object.prototype.hasOwnProperty.call($argument, key)) {
+          var value = $argument[key];
+          out[key] = value == null ? "" : String(value);
+        }
+      }
+      return out;
+    }
+    return parseArgumentString(String($argument));
+  }
+
+  function detectRuntime() {
+    if (typeof $environment !== "undefined" && $environment && $environment.product) {
+      return String($environment.product);
+    }
+    if (typeof $loon !== "undefined") {
+      return "Loon";
+    }
+    return "Unknown";
+  }
+
+  function isLoonRuntime() {
+    return detectRuntime() === "Loon";
+  }
+
+  function isGzipBytes(bytes) {
+    return bytes && bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+  }
+
+  function readGeocodeCache() {
+    if (typeof $persistentStore === "undefined" || !$persistentStore.read) {
+      return null;
+    }
+    try {
+      var raw = $persistentStore.read("location_spoofer_geocode");
+      return raw ? JSON.parse(raw) : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function writeGeocodeCache(entry) {
+    if (typeof $persistentStore === "undefined" || !$persistentStore.write) {
+      return;
+    }
+    try {
+      $persistentStore.write("location_spoofer_geocode", JSON.stringify(entry));
+    } catch (err) {
+      // ignore cache write failures
+    }
+  }
+
+  function fetchElevation(lat, lng, callback) {
+    if (typeof $httpClient === "undefined" || !$httpClient.get) {
+      callback(null);
+      return;
+    }
+    var url =
+      "https://api.open-meteo.com/v1/elevation?latitude=" +
+      encodeURIComponent(String(lat)) +
+      "&longitude=" +
+      encodeURIComponent(String(lng));
+    $httpClient.get({ url: url, timeout: 4000 }, function (error, response, body) {
+      if (error || !body) {
+        callback(null);
+        return;
+      }
+      try {
+        var data = JSON.parse(body);
+        if (data && data.elevation && data.elevation.length) {
+          callback(Math.round(Number(data.elevation[0])));
+          return;
+        }
+      } catch (err) {
+        // ignore parse failures
+      }
+      callback(null);
+    });
+  }
+
+  function geocodeAddress(address, debug, callback) {
+    var query = String(address || "").trim();
+    if (!query) {
+      callback(null);
+      return;
+    }
+
+    var cached = readGeocodeCache();
+    if (cached && cached.address === query && Number.isFinite(Number(cached.latitude)) && Number.isFinite(Number(cached.longitude))) {
+      if (debug) {
+        console.log("Location spoofer geocode cache hit: " + query + " -> " + cached.latitude + "," + cached.longitude);
+      }
+      callback(cached);
+      return;
+    }
+
+    if (typeof $httpClient === "undefined" || !$httpClient.get) {
+      if (debug) {
+        console.log("Location spoofer geocode skipped: $httpClient unavailable");
+      }
+      callback(null);
+      return;
+    }
+
+    var url =
+      "https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=0&q=" +
+      encodeURIComponent(query);
+    $httpClient.get(
+      {
+        url: url,
+        timeout: 8000,
+        headers: { "User-Agent": "ios-location-spoofer/1.0 (Loon plugin)" }
+      },
+      function (error, response, body) {
+        if (error || !body) {
+          if (debug) {
+            console.log("Location spoofer geocode failed: " + (error || "empty body"));
+          }
+          callback(null);
+          return;
+        }
+        try {
+          var results = JSON.parse(body);
+          if (!results || !results.length) {
+            if (debug) {
+              console.log("Location spoofer geocode no result for: " + query);
+            }
+            callback(null);
+            return;
+          }
+          var hit = results[0];
+          var lat = Number(hit.lat);
+          var lng = Number(hit.lon);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+            callback(null);
+            return;
+          }
+          var entry = {
+            address: query,
+            latitude: lat,
+            longitude: lng,
+            displayName: hit.display_name || query
+          };
+          fetchElevation(lat, lng, function (altitude) {
+            if (altitude != null) {
+              entry.altitude = altitude;
+            }
+            writeGeocodeCache(entry);
+            if (debug) {
+              console.log(
+                "Location spoofer geocode resolved: " +
+                  query +
+                  " -> " +
+                  lat +
+                  "," +
+                  lng +
+                  (altitude != null ? ", alt=" + altitude : "")
+              );
+            }
+            callback(entry);
+          });
+        } catch (err) {
+          if (debug) {
+            console.log("Location spoofer geocode parse failed: " + err.message);
+          }
+          callback(null);
+        }
+      }
+    );
+  }
+
   function mergeConfig(base, extra) {
     var out = {};
     var key;
@@ -833,6 +1031,7 @@
       "mode",
       "latitude",
       "longitude",
+      "address",
       "horizontalAccuracy",
       "verticalAccuracy",
       "altitude",
@@ -863,28 +1062,48 @@
   }
 
   function loadRuntimeConfig(callback) {
-    var argument = typeof $argument !== "undefined" ? $argument : "";
-    var args = parseArgumentString(argument);
+    var args = readScriptArguments();
     var cfg = mergeConfig(DEFAULT_CONFIG, configFromArgs(args));
     var configUrl = args.configUrl || args.cfg || args.url || "";
+    var debug = cfg.debug === true || String(cfg.debug).toLowerCase() === "true";
+    var address = String(args.address || "").trim();
 
-    if (configUrl && typeof $httpClient !== "undefined" && $httpClient.get) {
-      $httpClient.get({ url: configUrl, timeout: 3000 }, function (error, response, body) {
-        if (!error && body) {
-          try {
-            cfg = mergeConfig(cfg, JSON.parse(body));
-          } catch (err) {
-            if (cfg.debug) {
-              console.log("Location spoofer config parse failed: " + err.message);
+    function finishConfig() {
+      if (configUrl && typeof $httpClient !== "undefined" && $httpClient.get) {
+        $httpClient.get({ url: configUrl, timeout: 3000 }, function (error, response, body) {
+          if (!error && body) {
+            try {
+              cfg = mergeConfig(cfg, JSON.parse(body));
+            } catch (err) {
+              if (debug) {
+                console.log("Location spoofer config parse failed: " + err.message);
+              }
             }
           }
+          callback(normalizeConfig(cfg));
+        });
+        return;
+      }
+      callback(normalizeConfig(cfg));
+    }
+
+    if (address) {
+      geocodeAddress(address, debug, function (resolved) {
+        if (resolved) {
+          cfg.latitude = resolved.latitude;
+          cfg.longitude = resolved.longitude;
+          if (resolved.altitude != null && (args.altitude == null || String(args.altitude).trim() === "")) {
+            cfg.altitude = resolved.altitude;
+          }
+        } else if (debug) {
+          console.log("Location spoofer geocode fallback to manual latitude/longitude");
         }
-        callback(normalizeConfig(cfg));
+        finishConfig();
       });
       return;
     }
 
-    callback(normalizeConfig(cfg));
+    finishConfig();
   }
 
   function headersWithBinaryBody(sourceHeaders, length) {
@@ -929,14 +1148,13 @@
     });
   }
 
-  // Decode an HTTP response body string that may be gzip/deflate/br encoded.
-  // Shadowrocket exposes $persistentStore-free helpers on $utils in newer builds;
-  // older builds leave the body already-decompressed. Fall back to the raw body.
+  // Decode an HTTP response body that may be gzip/deflate/br encoded.
+  // Shadowrocket/Surge expose $utils.ungzip; Loon falls back to DecompressionStream.
   function decompressBody(body, contentEncoding) {
-    if (!body || !contentEncoding) {
+    if (body == null) {
       return body;
     }
-    var enc = String(contentEncoding).toLowerCase();
+    var enc = contentEncoding ? String(contentEncoding).toLowerCase() : "";
     if (enc === "identity" || enc === "") {
       return body;
     }
@@ -956,6 +1174,61 @@
       }
     }
     return body;
+  }
+
+  function decompressGzipAsync(bytes, callback) {
+    if (typeof DecompressionStream === "undefined" || typeof Response === "undefined") {
+      callback(bytes);
+      return;
+    }
+    try {
+      new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")))
+        .arrayBuffer()
+        .then(function (buffer) {
+          callback(new Uint8Array(buffer));
+        })
+        .catch(function (err) {
+          if (typeof console !== "undefined") {
+            console.log("Location spoofer gzip async failed: " + err.message);
+          }
+          callback(bytes);
+        });
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.log("Location spoofer gzip async unavailable: " + err.message);
+      }
+      callback(bytes);
+    }
+  }
+
+  function decompressBodyBytes(body, contentEncoding, callback) {
+    var bytes = bodyToBytes(body);
+    if (!bytes || bytes.length < 2) {
+      callback(bytes);
+      return;
+    }
+
+    var enc = contentEncoding ? String(contentEncoding).toLowerCase() : "";
+    var gzipLikely = enc.indexOf("gzip") >= 0 || isGzipBytes(bytes);
+
+    if (!gzipLikely && enc.indexOf("deflate") < 0 && enc.indexOf("br") < 0) {
+      callback(bytes);
+      return;
+    }
+
+    var decoded = decompressBody(body, contentEncoding);
+    var decodedBytes = bodyToBytes(decoded);
+    if (decodedBytes && decodedBytes.length > 2 && !isGzipBytes(decodedBytes) && decodedBytes.length !== bytes.length) {
+      callback(decodedBytes);
+      return;
+    }
+
+    if (gzipLikely) {
+      decompressGzipAsync(bytes, callback);
+      return;
+    }
+
+    callback(bytes);
   }
 
   function headerValue(headers, name) {
@@ -1185,6 +1458,14 @@
       headers["X-Location-Spoofer-Wifi-Count"] = String(info.wifiCount);
       headers["X-Location-Spoofer-Cell-Count"] = String(info.cellCount || 0);
     }
+    if (isLoonRuntime()) {
+      $done({
+        status: 200,
+        headers: headers,
+        body: bytes
+      });
+      return;
+    }
     $done({
       response: {
         status: 200,
@@ -1201,9 +1482,88 @@
       headers["X-Location-Spoofer-Wifi-Count"] = String(info.wifiCount);
       headers["X-Location-Spoofer-Cell-Count"] = String(info.cellCount || 0);
     }
+    if (isLoonRuntime()) {
+      $done({
+        status: ($response && $response.status) || 200,
+        headers: headers,
+        body: bytes
+      });
+      return;
+    }
     $done({
       headers: headers,
       body: bytes
+    });
+  }
+
+  function continueResponseRewrite(config) {
+    var responseBody = messageBodyToBytes($response);
+    if (!responseBody || responseBody.length < 2) {
+      if (config.debug) {
+        console.log(
+          "Location spoofer response body too short: " +
+            (responseBody ? responseBody.length : 0) +
+            " bytes, head=" +
+            (responseBody ? hexPreview(responseBody) : "<none>")
+        );
+      }
+      donePassThrough();
+      return;
+    }
+    if (config.debug) {
+      console.log("Location spoofer response body: " + responseBody.length + " bytes, head=" + hexPreview(responseBody, 32));
+      if (isLoonRuntime()) {
+        console.log("Location spoofer runtime: Loon");
+      }
+    }
+    logHttpDump("response-original", $response, config);
+    logRawDump("response-original", responseBody, config);
+    var responseResult = spoofAppleResponse(responseBody, config);
+    if (config.debug) {
+      console.log(
+        "Location spoofer patched " +
+          responseResult.wifiCount +
+          " wifi devices, " +
+          responseResult.cellCount +
+          " cell towers, kind=" +
+          responseResult.kind +
+          ", prefix=" +
+          (responseResult.prefix || "<none>") +
+          ", response=" +
+          responseResult.response.length +
+          " bytes"
+      );
+      console.log("Location spoofer patched locations: " + patchedPayloadSummary(responseResult.payload));
+    }
+    logRawDump("response-patched", responseResult.response, config);
+    doneRewriteResponse(responseResult.response, {
+      wifiCount: responseResult.wifiCount,
+      cellCount: responseResult.cellCount,
+      debug: config.debug
+    });
+  }
+
+  function prepareResponseBody(config, callback) {
+    var respHeaders = ($response && $response.headers) || {};
+    var contentEncoding = headerValue(respHeaders, "Content-Encoding");
+    var rawRespBody = $response && ($response.body != null ? $response.body : $response.bodyBytes);
+    logHttpDump("response-wire-original", $response, config);
+    logRawDump("response-wire-original", bodyToBytes(rawRespBody), config);
+    decompressBodyBytes(rawRespBody, contentEncoding, function (decodedBytes) {
+      if (decodedBytes) {
+        $response.body = decodedBytes;
+      }
+      if (config.debug && decodedBytes && isGzipBytes(bodyToBytes(rawRespBody))) {
+        console.log(
+          "Location spoofer decompressed body: " +
+            bodyToBytes(rawRespBody).length +
+            " -> " +
+            decodedBytes.length +
+            " bytes, enc=" +
+            (contentEncoding || "gzip-magic")
+        );
+      }
+      callback();
     });
   }
 
@@ -1240,40 +1600,8 @@
             donePassThrough();
             return;
           }
-          var respHeaders = ($response && $response.headers) || {};
-          var contentEncoding = headerValue(respHeaders, "Content-Encoding");
-          var rawRespBody = $response && ($response.body != null ? $response.body : $response.bodyBytes);
-          logHttpDump("response-wire-original", $response, config);
-          logRawDump("response-wire-original", bodyToBytes(rawRespBody), config);
-          if (rawRespBody != null && contentEncoding) {
-            var decoded = decompressBody(rawRespBody, contentEncoding);
-            if (decoded !== rawRespBody) {
-              $response.body = decoded;
-            }
-          }
-          var responseBody = messageBodyToBytes($response);
-          if (!responseBody || responseBody.length < 2) {
-            if (config.debug) {
-              console.log("Location spoofer response body too short: " + (responseBody ? responseBody.length : 0) + " bytes, head=" + (responseBody ? hexPreview(responseBody) : "<none>") + ", enc=" + (contentEncoding || "none"));
-            }
-            donePassThrough();
-            return;
-          }
-          if (config.debug) {
-            console.log("Location spoofer response body: " + responseBody.length + " bytes, head=" + hexPreview(responseBody, 32));
-          }
-          logHttpDump("response-original", $response, config);
-          logRawDump("response-original", responseBody, config);
-          var responseResult = spoofAppleResponse(responseBody, config);
-          if (config.debug) {
-            console.log("Location spoofer patched " + responseResult.wifiCount + " wifi devices, " + responseResult.cellCount + " cell towers, kind=" + responseResult.kind + ", prefix=" + (responseResult.prefix || "<none>") + ", response=" + responseResult.response.length + " bytes");
-            console.log("Location spoofer patched locations: " + patchedPayloadSummary(responseResult.payload));
-          }
-          logRawDump("response-patched", responseResult.response, config);
-          doneRewriteResponse(responseResult.response, {
-            wifiCount: responseResult.wifiCount,
-            cellCount: responseResult.cellCount,
-            debug: config.debug
+          prepareResponseBody(config, function () {
+            continueResponseRewrite(config);
           });
           return;
         }
@@ -1369,6 +1697,8 @@
     spoofArpcRequest: spoofArpcRequest,
     spoofAppleResponse: spoofAppleResponse,
     parseArgumentString: parseArgumentString,
+    readScriptArguments: readScriptArguments,
+    geocodeAddress: geocodeAddress,
     prepareRequestHeaders: prepareRequestHeaders
   };
 

@@ -1,9 +1,20 @@
 #!name=iOS Location Spoofer
-#!desc=拦截 Apple 定位服务回传的坐标资料并置换为指定位置。Loon 专用。
-#!homepage=https://github.com/mekos2772/ios-location-spoofer
+#!desc=拦截 Apple 定位服务回传的坐标并置换为指定位置（Loon 插件）
+#!homepage=https://github.com/kun775/ios-location-spoofer
+
+# 若 GitHub 拉取失败，可将 location-spoofer.js 放到 Loon 脚本目录，并把下方 script-path 改为本地文件名
+
+[Argument]
+enabled = switch,true,tag=启用定位修改,desc=关闭后脚本直接放行原始定位数据
+latitude = input,"37.3349",tag=纬度(WGS-84),desc=手动输入纬度，范围 -90 到 90
+longitude = input,"-122.00902",tag=经度(WGS-84),desc=手动输入经度，范围 -180 到 180
+altitude = input,"530",tag=海拔(米),desc=目标海拔，建议与地点匹配
+address = input,"",tag=地址搜索,desc=输入地名如「北京天安门」，保存插件后优先于手动经纬度（联网解析）
+configUrl = input,"",tag=远程配置URL,desc=可选，location-picker 的 loc.json?token= 地址
+debug = switch,false,tag=调试日志,desc=开启后在 Loon 日志查看拦截详情
 
 [Script]
-http-response ^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc(?:\?.*)?$ script-path=https://raw.githubusercontent.com/mekos2772/ios-location-spoofer/main/location-spoofer.js, requires-body=true, binary-body-mode=true, timeout=10, tag=iOS Location Spoofer
+http-response ^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc(?:\?.*)?$ script-path=https://raw.githubusercontent.com/kun775/ios-location-spoofer/main/location-spoofer.js, requires-body=true, binary-body-mode=true, max-size=1048576, timeout=10, tag=iOS Location Spoofer, argument="mode=response&enabled={enabled}&latitude={latitude}&longitude={longitude}&altitude={altitude}&address={address}&configUrl={configUrl}&debug={debug}&horizontalAccuracy=39&verticalAccuracy=1000"
 
-[MITM]
+[mitm]
 hostname = gs-loc.apple.com, gs-loc-cn.apple.com, bluedot.is.autonavi.com, bluedot.is.autonavi.com.gds.alibabadns.com
