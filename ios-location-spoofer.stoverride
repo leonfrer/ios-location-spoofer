@@ -2,19 +2,23 @@
 #!desc=劫持 Apple 定位封包，把坐标换成你想要的。Stash 覆写版。
 #!homepage=https://github.com/mekos2772/ios-location-spoofer
 
-scripts:
-  - match: ^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc(?:\?.*)?$
-    name: https://raw.githubusercontent.com/mekos2772/ios-location-spoofer/main/location-spoofer.js
-    type: response
-    require-body: true
-    binary-body-mode: true
-    max-size: 1048576
-    timeout: 10
-    argument: mode=response&latitude=37.3349&longitude=-122.00902&horizontalAccuracy=39&verticalAccuracy=1000&altitude=530&debug=false
-
-mitm:
-  hostname:
+http:
+  script:
+    - match: ^https?:\/\/(?:gs-loc(?:-cn)?\.apple\.com|bluedot\.is\.autonavi\.com(?:\.gds\.alibabadns\.com)?)\/clls\/wloc(?:\?.*)?$
+      name: ios-location-spoofer
+      type: response
+      require-body: true
+      binary-mode: true
+      max-size: 1048576
+      timeout: 10
+      argument: mode=response&latitude=37.3349&longitude=-122.00902&horizontalAccuracy=39&verticalAccuracy=1000&altitude=530&debug=false
+  mitm:
     - gs-loc.apple.com
     - gs-loc-cn.apple.com
     - bluedot.is.autonavi.com
     - bluedot.is.autonavi.com.gds.alibabadns.com
+
+script-providers:
+  ios-location-spoofer:
+    url: https://raw.githubusercontent.com/mekos2772/ios-location-spoofer/main/location-spoofer.js
+    interval: 86400
