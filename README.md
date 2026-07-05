@@ -2,7 +2,7 @@
 
 Use your proxy app's HTTPS decryption (MITM) to teleport Apple's location service anywhere in the world — no jailbreak, no computer, no developer account.
 
-**English** · [中文](README_zh-cn.md)
+**English** | [中文](README_zh-cn.md)
 
 ## What it is
 

@@ -55,6 +55,8 @@ const PAGE = `<!doctype html>
     border-left:1px solid #e2e2e2;line-height:1}
   .lang button:first-child{border-left:0}
   .lang button.active{background:#007aff;color:#fff}
+  .src{padding:6px 10px 14px;text-align:center;font-size:12px;color:#8e8e93}
+  .src a{color:#007aff;text-decoration:none}
 </style>
 </head>
 <body>
@@ -82,6 +84,7 @@ const PAGE = `<!doctype html>
     <button id="restorebtn">恢复真实定位</button>
   </div>
 </div>
+<footer class="src">Source: <a href="https://github.com/hoicau/ios-location-spoofer" target="_blank" rel="noopener">hoicau/ios-location-spoofer</a></footer>
 <div class="toast" id="toast"></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>

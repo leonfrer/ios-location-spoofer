@@ -2,7 +2,7 @@
 
 用代理软件的 HTTPS 解密（MITM）功能，把 Apple 地图定位骗到世界任何角落 —— 无需越狱、无需电脑、无需开发者账号。
 
-[English](README.md) · **中文**
+[English](README.md) | **中文**
 
 ## 这是什么
 
