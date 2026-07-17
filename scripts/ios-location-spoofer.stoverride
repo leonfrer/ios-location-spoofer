@@ -26,7 +26,8 @@ http:
       max-size: 1048576
       timeout: 10
       # configUrl 未指定或不可达则用 latitude/longitude 备用值
-      argument: mode=response&latitude=37.3349&longitude=-122.00902&horizontalAccuracy=39&verticalAccuracy=1000&altitude=530&configUrl=https://your-worker.your-account.workers.dev/loc.json?token=YOUR_TOKEN&debug=false
+22.318557810470857, 114.17031139855762
+      argument: mode=response&latitude=22.318557810470857&longitude=114.17031139855762&horizontalAccuracy=39&verticalAccuracy=1000&altitude=530&configUrl=https://your-worker.your-account.workers.dev/loc.json?token=YOUR_TOKEN&debug=false
   mitm:
     - gs-loc.apple.com
     - gs-loc-cn.apple.com
